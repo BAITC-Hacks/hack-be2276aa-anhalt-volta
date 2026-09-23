@@ -1,4 +1,0 @@
-google-genai>=1.30,<2
-python-dotenv>=1.0,<2
-pydantic>=2.8,<3
-streamlit>=1.40,<2
