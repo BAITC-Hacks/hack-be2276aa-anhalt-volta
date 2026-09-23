@@ -41,6 +41,13 @@ def _load_catalog() -> list[dict[str, Any]]:
             ],
             "example": example[:100],
         })
+    for intent in data.get("system_intents", []):
+        catalog.append({
+            "id": intent["id"],
+            "purpose": intent.get("description", "")[:120],
+            "boundaries": [],
+            "example": "",
+        })
     return catalog
 
 
@@ -53,6 +60,9 @@ SCENARIO_META = {
     item["scenario_id"]: item
     for item in _SCENARIO_DATA["scenarios"]
 }
+SCENARIO_META.update({
+    item["id"]: item for item in _SCENARIO_DATA.get("system_intents", [])
+})
 
 ROUTER_SCHEMA = {
     "type": "object",
@@ -104,7 +114,8 @@ ROUTER_SCHEMA = {
 }
 
 OPERATOR_PATTERN = re.compile(
-    r"оператор|соедин.*челов|человеком|жив.*челов|адаммен|тірі оператор",
+    r"(?:соедин(?:ите|ить)?\s+с\s+(?:оператором|человеком)|"
+    r"позовите\s+оператора|оператормен\s+байланыстырыңыз)",
     re.IGNORECASE,
 )
 
@@ -113,41 +124,10 @@ def _operator_requested(text: str) -> bool:
     return bool(OPERATOR_PATTERN.search(text))
 
 
-VAGUE_OPENING_PATTERN = re.compile(
-    r"^(?:(?:алло|здравствуйте|добрый\s+день|добрый\s+вечер|привет|сәлеметсіз\s+бе)\W*)?"
-    r"(?:(?:хочу\s+спросить|хочу\s+узнать|есть\s+вопрос|по\s+поводу|насч[её]т|бір\s+нәрсе\s+сұрайын|сұрағым\s+бар)\W*)?"
-    r"(?:страховк\w*|полис\w*|машин\w*|авто\w*|көлік\w*|сақтандыру\w*)?\W*$",
-    re.IGNORECASE,
-)
-VAGUE_TOPIC_WORDS = re.compile(
-    r"\b(?:страховк\w*|полис\w*|машин\w*|авто\w*|көлік\w*|сақтандыру\w*)\b",
-    re.IGNORECASE,
-)
-
-
-def _is_unclear_utterance(text: str) -> bool:
-    normalized = " ".join(text.strip().split())
-    if not normalized or VAGUE_OPENING_PATTERN.fullmatch(normalized):
-        return True
-    words = re.findall(r"[\w-]+", normalized.lower())
-    fillers = {
-        "алло", "здравствуйте", "добрый", "день", "вечер", "привет", "сәлеметсіз", "бе",
-        "хочу", "спросить", "узнать", "есть", "вопрос", "по", "поводу", "насчет", "про", "о", "об",
-        "я", "ну", "там", "с",
-        "бір", "нәрсе", "сұрайын", "сұрағым", "бар",
-    }
-    content = [word for word in words if word not in fillers and not VAGUE_TOPIC_WORDS.fullmatch(word)]
-    return bool(VAGUE_TOPIC_WORDS.search(normalized)) and not content
-
-
-def _unclear_result() -> dict[str, Any]:
-    return {
-        "decision": "clarify", "scenario_id": "SYS_UNCLEAR", "confidence": 0.30,
-        "alternatives": [], "reason": "Клиент обозначил только общую тему без конкретной потребности.",
-        "entities": {}, "queued_scenarios": [], "reply_language": "ru",
-        "needs_clarification": True,
-        "clarifying_question": "Уточните, пожалуйста, какой именно вопрос по страховке или автомобилю нужно решить.",
-    }
+try:
+    _OPENAI_CLIENT = OpenAI(timeout=6.0, max_retries=0)
+except Exception:
+    _OPENAI_CLIENT = None
 
 
 def _prioritize_topics(result: dict[str, Any]) -> dict[str, Any]:
@@ -178,7 +158,7 @@ def _rules_result(
     history: list[dict[str, Any]],
     current_scenario: str | None,
 ) -> dict[str, Any]:
-    result = _unclear_result() if _is_unclear_utterance(utterance) else route_dialogue(utterance, history, current_scenario)
+    result = route_dialogue(utterance, history, current_scenario)
     # Let the unchanged baseline router inspect independent clauses too. This
     # exposes secondary topics that its single-pass rule may otherwise hide.
     clauses = [part.strip() for part in re.split(
@@ -203,8 +183,15 @@ STATIC_PROMPT = (
     "Каталог сценариев (id, назначение, границы и один пример):\n"
     f"{json.dumps(SCENARIO_CATALOG, ensure_ascii=False, separators=(',', ':'))}\n\n"
     "Выбирай сценарий с учётом смены темы, истории и смешения русского с казахским. "
-    "Если клиент назвал только общую тему без конкретной потребности, выбери SYS_UNCLEAR и action=clarify; "
-    "не подставляй наиболее вероятный бизнес-сценарий. Общая тема или приветствие сами по себе недостаточны. "
+    "Сначала отдели ясность потребности от соответствия услугам компании. "
+    "SYS_UNCLEAR используй только когда непонятно, чего хочет клиент: названа лишь общая тема "
+    "или есть только приветствие без конкретного запроса. Если желание клиента можно сформулировать, "
+    "не используй SYS_UNCLEAR, даже если услуга не относится к компании. "
+    "SYS_OUT_OF_SCOPE используй, когда потребность ясна, но Saqta Insurance её не предлагает: "
+    "страхование жизни, пенсионные аннуитеты, кредиты, а также любую тему вне страхования. "
+    "Для SYS_UNCLEAR ставь action=clarify, для SYS_OUT_OF_SCOPE — action=handoff. "
+    "Если в реплике несколько тем, сценарий с priority=urgent ставь основным, "
+    "а остальные темы сохраняй в pending_topics. "
     "pending_topics — список ID дополнительных сценариев из каталога, только из текущей реплики. "
     "Если клиент просит оператора, action должен быть handoff. "
     "reasoning — одно короткое предложение на русском."
@@ -224,6 +211,39 @@ def _params_list(value: Any) -> list[dict[str, str]]:
             for name, item_value in value.items()
         ]
     return []
+
+
+def _clean_pending_topics(result: dict[str, Any]) -> list[str]:
+    primary = result.get("scenario_id")
+    pending = result.get("pending_topics") or []
+    if not isinstance(pending, list):
+        return []
+    cleaned = []
+    for item in pending:
+        if item in SCENARIO_IDS and item != primary and item not in cleaned:
+            cleaned.append(item)
+    return cleaned
+
+
+def _promote_urgent_pending(result: dict[str, Any]) -> dict[str, Any]:
+    primary = result.get("scenario_id")
+    pending = _clean_pending_topics(result)
+    primary_priority = SCENARIO_META.get(primary, {}).get("priority")
+    urgent = next(
+        (item for item in pending if SCENARIO_META.get(item, {}).get("priority") == "urgent"),
+        None,
+    )
+    if urgent and primary_priority != "urgent":
+        result["scenario_id"] = urgent
+        pending = [primary] + [item for item in pending if item != urgent and item != primary]
+        note = f"Срочный сценарий поставлен первым: {SCENARIO_META[urgent].get('name', urgent)}."
+        reasoning = str(result.get("reasoning", "")).strip()
+        result["reasoning"] = f"{reasoning} {note}".strip()[:180]
+    result["pending_topics"] = [
+        item for item in pending
+        if item in SCENARIO_IDS and item != result.get("scenario_id")
+    ]
+    return result
 
 
 def _fallback(
@@ -302,8 +322,7 @@ def route(
     rules_scenario = rules.get("scenario_id")
     rules_meta = SCENARIO_META.get(rules_scenario, {})
     if (
-        not _is_unclear_utterance(utterance)
-        and rules_scenario in SCENARIO_IDS
+        rules_scenario in SCENARIO_IDS
         and rules_meta.get("fast_path_eligible") is True
         and float(rules.get("confidence", 0.0)) >= 0.80
         and rules.get("decision") not in {"clarify", "multi_intent"}
@@ -326,8 +345,9 @@ def route(
         }
 
     try:
-        client = OpenAI(timeout=6.0, max_retries=0)
-        response = client.responses.create(
+        if _OPENAI_CLIENT is None:
+            raise RuntimeError("OpenAI client is unavailable")
+        response = _OPENAI_CLIENT.responses.create(
             model=MODEL,
             input=_prompt(utterance, history, current_scenario),
             max_output_tokens=300,
@@ -342,19 +362,12 @@ def route(
         )
         result = json.loads(response.output_text)
 
-        if _is_unclear_utterance(utterance):
-            result["scenario_id"] = "SYS_UNCLEAR"
-            result["action"] = "clarify"
-            result["reasoning"] = "Клиент обозначил только общую тему без конкретной потребности."
-            result["alternatives"] = []
-            result["pending_topics"] = []
-        elif result.get("scenario_id") not in SCENARIO_IDS:
+        if result.get("scenario_id") not in SCENARIO_IDS:
             result["action"] = "clarify"
             result["reasoning"] = "Не удалось уверенно определить сценарий из каталога."
-        if _operator_requested(utterance):
-            result["action"] = "handoff"
         result["alternatives"] = result.get("alternatives", [])[:3]
         result["params"] = _params_list(result.get("params", []))
+        _promote_urgent_pending(result)
         result["router_mode"] = "llm"
         result["llm_ms"] = round((time.perf_counter() - started_at) * 1000, 3)
         logger.info(
