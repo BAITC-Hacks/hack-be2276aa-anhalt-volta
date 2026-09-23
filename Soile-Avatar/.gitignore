@@ -7,10 +7,12 @@
 *.log
 venv/
 .venv/
+.venv-avatar/
+.python-runtime/
+.tools/
 env/
 __pycache__/
 *.py[cod]
 .DS_Store
 Thumbs.db
 deliverables/
-Soile-Avatar/.tools/

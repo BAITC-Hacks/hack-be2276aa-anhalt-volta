@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sөile · Avatar studio</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<main>
+  <section class="stage" id="stage" aria-label="Анимированный голосовой ассистент">
+    <header><span class="brand">SӨILE <span>/ AVATAR LAB</span></span><span id="state" role="status">● idle</span></header>
+    <div class="orbit orbit-one"></div><div class="orbit orbit-two"></div>
+    <div class="character" id="character">
+      <svg viewBox="0 0 400 420" role="img" aria-label="Стилизованное объёмное лицо ассистента">
+        <defs>
+          <radialGradient id="skin" cx="32%" cy="25%" r="85%"><stop stop-color="#fbf1e7"/><stop offset=".48" stop-color="#dbc5b9"/><stop offset=".85" stop-color="#9b8a99"/><stop offset="1" stop-color="#62617f"/></radialGradient>
+          <linearGradient id="neck" x2="1" y2=".3"><stop stop-color="#807484"/><stop offset=".55" stop-color="#cfb5aa"/><stop offset="1" stop-color="#756e89"/></linearGradient>
+          <linearGradient id="hair" x2=".8" y2="1"><stop stop-color="#667b8e"/><stop offset=".45" stop-color="#293d53"/><stop offset="1" stop-color="#111e32"/></linearGradient>
+          <linearGradient id="suit" x2="1" y2=".2"><stop stop-color="#203d50"/><stop offset=".5" stop-color="#48737b"/><stop offset="1" stop-color="#152c44"/></linearGradient>
+          <radialGradient id="nose"><stop stop-color="#ffe5d1"/><stop offset="1" stop-color="#b79898"/></radialGradient>
+          <radialGradient id="iris"><stop stop-color="#1a293a"/><stop offset=".55" stop-color="#387778"/><stop offset="1" stop-color="#152333"/></radialGradient>
+          <clipPath id="mouthClip"><ellipse id="mouthMask" cx="0" cy="0" rx="24" ry="2"/></clipPath>
+        </defs>
+        <ellipse cx="200" cy="391" rx="114" ry="12" fill="#060f21" opacity=".5"/>
+        <g id="body"><path d="M72 404Q70 353 146 338L253 338Q326 353 329 404" fill="url(#suit)"/><path d="M174 289L168 341Q200 370 232 341L226 289" fill="url(#neck)"/><path d="M146 338Q198 390 253 338L264 349Q200 402 136 349" fill="#77d9ce" opacity=".8"/></g>
+        <g id="head">
+          <g data-depth="-12"><path d="M99 223Q65 103 135 66Q211 17 283 92Q326 143 297 239L267 290H126Z" fill="url(#hair)"/>
+            <ellipse cx="106" cy="222" rx="19" ry="34" fill="url(#neck)"/><ellipse cx="294" cy="222" rx="19" ry="34" fill="url(#neck)"/>
+            <path d="M99 210Q112 208 109 239M300 210Q288 208 293 239" fill="none" stroke="#806d7b" stroke-width="4"/></g>
+          <g data-depth="0"><path d="M112 172Q107 107 201 99Q288 102 289 172L281 250Q271 298 224 326Q201 339 177 326Q127 296 118 250Z" fill="url(#skin)"/>
+            <path d="M120 183Q116 268 179 318Q136 299 123 258Z" fill="#ffe5d1" opacity=".25"/>
+            <ellipse cx="145" cy="249" rx="23" ry="12" fill="#d99599" opacity=".25"/><ellipse cx="254" cy="249" rx="23" ry="12" fill="#c88193" opacity=".22"/></g>
+          <g data-depth="9"><path d="M125 183Q149 169 174 182M224 181Q249 168 274 183" stroke="#3b3b4e" stroke-width="8" fill="none" stroke-linecap="round"/>
+            <g class="eye" style="transform-origin:150px 211px"><ellipse cx="150" cy="211" rx="24" ry="13" fill="#f9f4ee"/><g class="pupil"><ellipse cx="151" cy="211" rx="10" ry="12" fill="url(#iris)"/><circle cx="151" cy="212" r="4.5" fill="#081726"/><circle cx="154" cy="207" r="3" fill="white"/></g><path d="M126 211Q150 187 174 211" fill="none" stroke="#514653" stroke-width="3"/></g>
+            <g class="eye" style="transform-origin:249px 211px"><ellipse cx="249" cy="211" rx="24" ry="13" fill="#f9f4ee"/><g class="pupil"><ellipse cx="248" cy="211" rx="10" ry="12" fill="url(#iris)"/><circle cx="248" cy="212" r="4.5" fill="#081726"/><circle cx="251" cy="207" r="3" fill="white"/></g><path d="M225 211Q249 187 273 211" fill="none" stroke="#514653" stroke-width="3"/></g></g>
+          <g data-depth="23"><path d="M195 216Q190 239 182 248Q196 258 213 249Q204 242 204 221" fill="url(#nose)"/><path d="M185 250Q200 257 211 250" stroke="#927481" stroke-width="2" fill="none"/></g>
+          <g data-depth="12"><g id="mouth" transform="translate(200 282)"><ellipse id="lip" rx="27" ry="4" fill="#ac747f"/>
+            <g clip-path="url(#mouthClip)"><rect x="-50" y="-35" width="100" height="70" fill="#342436"/><rect id="teeth" x="-31" y="-20" width="62" height="18" rx="5" fill="#fff1e2"/><ellipse id="tongue" cx="0" cy="15" rx="19" ry="8" fill="#d48798"/></g>
+            <path id="smile" d="M-24 0Q0 8 24 0" fill="none" stroke="#704e63" stroke-width="2.5" stroke-linecap="round"/></g></g>
+          <g data-depth="15"><path d="M102 182Q91 111 142 83Q221 43 280 108L295 172Q270 151 256 115Q213 161 141 149L118 188Z" fill="url(#hair)"/><path d="M126 124Q172 76 242 92" fill="none" stroke="#9bbbc5" stroke-width="4" opacity=".27"/><path d="M132 135Q190 111 236 104" fill="none" stroke="#92b2c0" stroke-width="2" opacity=".2"/></g>
+        </g>
+      </svg>
+    </div>
+    <footer><div><strong>Рядом. Слушаю. Помогаю.</strong><small>Голосовой ассистент · 2.5D</small></div><div class="signal"><i></i><i></i><i></i><i></i><i></i></div></footer>
+  </section>
+  <section class="controls">
+    <div class="row"><button id="idle" class="quiet">Idle</button><button id="listening" class="quiet">Слушает · демо</button><button id="thinking" class="quiet">Думает · демо</button><button id="stop">■ Стоп</button><label class="toggle"><input type="checkbox" id="autoplay"> Читать ответы</label></div>
+    <label for="text">Проверить голос</label><textarea id="text" rows="2" maxlength="2000">Привет, чем могу помочь?</textarea>
+    <div class="row"><select id="voice" aria-label="Голос TTS"></select><button id="speak" class="primary">▶ Произнести</button><button id="reply">Ответ из чата</button><button id="demo">Демо WAV + visemes</button></div>
+    <details><summary>Аудиофайл и настройки лица</summary>
+      <p class="hint">WAV/MP3 остаётся в браузере. Для точного lip-sync добавьте JSON mouthCues или подготовьте файл через Rhubarb в приложении.</p>
+      <div class="row"><label class="file">Аудио <input id="file" type="file" accept="audio/wav,audio/mpeg,.wav,.mp3"></label><label class="file">Visemes JSON <input id="cues" type="file" accept=".json,application/json"></label></div>
+      <audio id="audio" controls preload="metadata"></audio>
+      <div class="sliders"><label>Поворот ↔ <input id="yaw" type="range" min="-1" max="1" value="0" step=".01"></label><label>Наклон ↕ <input id="pitch" type="range" min="-1" max="1" value="0" step=".01"></label><label>Наклон головы <input id="roll" type="range" min="-1" max="1" value="0" step=".01"></label></div>
+      <div class="row"><label>Рот <select id="shape"><option value="auto">Авто</option></select></label><label><input id="motion" type="checkbox" checked> Idle-движение</label></div>
+    </details>
+    <p id="notice" role="status">Без AI: движения и моргание работают постоянно.</p>
+  </section>
+</main><script src="core.js"></script><script src="avatar.js"></script></body></html>

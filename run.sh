@@ -49,11 +49,22 @@ else
 fi
 
 PORT="${PORT:-8000}"
-if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
-  echo "Ошибка: порт $PORT уже занят." >&2
-  echo "Проверьте процесс: lsof -nP -iTCP:$PORT -sTCP:LISTEN" >&2
-  echo "Освободите порт или запустите на другом: PORT=8001 bash run.sh" >&2
-  exit 1
-fi
+STREAMLIT_PORT="${STREAMLIT_PORT:-8501}"
+check_port() {
+  local port="$1"
+  if command -v lsof >/dev/null 2>&1 && lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1; then
+    echo "Ошибка: порт $port уже занят." >&2
+    echo "Проверьте процесс: lsof -nP -iTCP:$port -sTCP:LISTEN" >&2
+    return 1
+  fi
+}
+check_port "$PORT" || { echo "Освободите порт или запустите API на другом: PORT=8001 bash run.sh" >&2; exit 1; }
+check_port "$STREAMLIT_PORT" || { echo "Освободите порт или запустите UI на другом: STREAMLIT_PORT=8502 bash run.sh" >&2; exit 1; }
 
-exec "$VENV_PYTHON" -m uvicorn backend.app:app --reload --port "$PORT"
+cleanup() { [[ -n "${BACKEND_PID:-}" ]] && kill "$BACKEND_PID" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+echo "FastAPI:   http://127.0.0.1:$PORT"
+echo "Streamlit: http://127.0.0.1:$STREAMLIT_PORT"
+"$VENV_PYTHON" -m uvicorn backend.app:app --reload --port "$PORT" &
+BACKEND_PID=$!
+"$VENV_PYTHON" -m streamlit run Soile-Avatar/app.py --server.address 127.0.0.1 --server.port "$STREAMLIT_PORT"

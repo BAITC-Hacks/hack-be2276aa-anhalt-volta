@@ -1,0 +1,29 @@
+SOILE - VOICE ASSISTANT + 2.5D AVATAR
+
+1. Extract the entire Soile-Avatar folder from the ZIP to your computer.
+2. Install Python 3.11 or newer if needed (https://www.python.org/downloads/).
+3. On Windows, double-click START_WINDOWS.cmd.
+   The first launch creates .venv and installs requirements (internet required).
+4. Open http://localhost:8501 and click the Demo WAV + visemes button.
+5. Stop the server with Ctrl+C in its terminal.
+
+Manual launch (Windows PowerShell):
+  py -3 -m venv .venv
+  .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+  .\.venv\Scripts\python.exe -m streamlit run app.py --server.address localhost
+
+macOS/Linux:
+  python3 -m venv .venv
+  .venv/bin/python -m pip install -r requirements.txt
+  .venv/bin/python -m streamlit run app.py --server.address localhost
+
+Demo avatar and included WAV/visemes work without API keys.
+Rhubarb 1.14.0 for Windows is included with its license in .tools.
+For macOS/Linux install Rhubarb separately. MP3 phonetic analysis requires FFmpeg.
+Browser TTS uses installed voices and approximate lip sync.
+For Gemini chat/STT, copy .env.example to .env and set your own API key/model.
+Do not share .env. NVIDIA streaming integration is not implemented yet.
+
+README.md and AVATAR.md contain detailed Russian instructions and limitations.
+Google Drive stores the archive; run the extracted project locally.
+No API keys, chat histories, Python environments or caches are included.
