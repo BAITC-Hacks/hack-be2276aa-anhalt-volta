@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
-from .router_client import route
+from .router_client import route_safely
 
 
 load_dotenv()
@@ -31,7 +31,7 @@ def create_session() -> dict[str, str]:
     session_id = str(uuid.uuid4())
     sessions[session_id] = {
         "history": [],
-        "scenario_id": None,
+        "current_scenario": None,
         "pending_topics": [],
     }
     return {"session_id": session_id}
@@ -49,16 +49,17 @@ def process_turn(request: TurnRequest) -> dict[str, Any]:
     lookup_ms = (time.perf_counter() - started_at) * 1000
 
     routing_started_at = time.perf_counter()
-    result = route(request.text, history)
+    result = route_safely(request.text, history, session["current_scenario"])
     routing_ms = (time.perf_counter() - routing_started_at) * 1000
 
     save_started_at = time.perf_counter()
     history.append({"role": "user", "text": request.text})
     history.append({"role": "assistant", "text": result["answer_text"]})
-    session["scenario_id"] = result["scenario_id"]
+    session["current_scenario"] = result["scenario_id"]
     session["pending_topics"] = result["pending_topics"]
     save_ms = (time.perf_counter() - save_started_at) * 1000
 
+    llm_ms = result.pop("llm_ms", 0.0)
     total_ms = (time.perf_counter() - started_at) * 1000
     return {
         **result,
@@ -66,6 +67,7 @@ def process_turn(request: TurnRequest) -> dict[str, Any]:
         "timings_ms": {
             "session_lookup": round(lookup_ms, 3),
             "routing": round(routing_ms, 3),
+            "llm_ms": llm_ms,
             "save": round(save_ms, 3),
             "total": round(total_ms, 3),
         },
