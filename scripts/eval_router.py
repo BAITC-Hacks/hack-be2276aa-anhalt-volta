@@ -18,7 +18,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from backend.llm_router import MODEL, route  # noqa: E402
+from backend import llm_router  # noqa: E402
 
 logging.getLogger("backend.llm_router").disabled = True
 
@@ -68,7 +68,7 @@ def summarize(rows: list[dict], mode: str) -> dict:
     }
 
 
-def append_report(rows: list[dict], workers: int) -> str:
+def append_report(rows: list[dict], workers: int, model: str) -> str:
     timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
     summaries = [summarize(rows, "fast_path"), summarize(rows, "llm"), summarize(rows, "rules_fallback")]
     live_rows = [row for row in rows if row["mode"] in {"fast_path", "llm"}]
@@ -77,7 +77,7 @@ def append_report(rows: list[dict], workers: int) -> str:
     lines = [
         "\n## Live, с fast path\n",
         f"Дата прогона: {timestamp}",
-        f"Модель: `{MODEL}`",
+        f"Модель: `{model}`",
         f"Датасет: `voice_router_dataset/dev_utterances.json`, реплик: {len(rows)}, worker-ов: {workers}",
         "Источник ключа: `.env` через `python-dotenv`.\n",
         f"Итоговая primary accuracy для `fast_path` + `llm`: **{total_accuracy:.1f}%**.\n",
@@ -112,11 +112,14 @@ def append_report(rows: list[dict], workers: int) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workers", type=int, default=8, help="Количество параллельных запросов")
+    parser.add_argument("--model", help="Модель OpenAI для этого прогона; .env не изменяется")
     args = parser.parse_args()
     if not os.getenv("OPENAI_API_KEY"):
         print("OPENAI_API_KEY не найден в окружении/.env; live-прогон остановлен.", file=sys.stderr)
         return 2
 
+    if args.model:
+        llm_router.MODEL = args.model
     items = json.loads(DATASET.read_text(encoding="utf-8"))["utterances"]
     rows = []
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as pool:
@@ -130,7 +133,7 @@ def main() -> int:
                 flush=True,
             )
     rows.sort(key=lambda row: row["id"])
-    report = append_report(rows, max(1, args.workers))
+    report = append_report(rows, max(1, args.workers), llm_router.MODEL)
     print("\n" + report)
     return 0
 

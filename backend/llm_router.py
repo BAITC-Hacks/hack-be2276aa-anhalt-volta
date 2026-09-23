@@ -24,6 +24,14 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 DATASET_PATH = Path(__file__).resolve().parent.parent / "voice_router_dataset" / "scenarios.json"
 
 
+def _gpt5_reasoning_effort(model: str) -> str | None:
+    if not model.lower().startswith("gpt-5"):
+        return None
+    if re.match(r"^gpt-5\.(?:4|2|1)(?:$|[-])", model.lower()):
+        return "none"
+    return "minimal"
+
+
 def _load_catalog() -> list[dict[str, Any]]:
     with DATASET_PATH.open(encoding="utf-8") as file:
         data = json.load(file)
@@ -347,11 +355,11 @@ def route(
     try:
         if _OPENAI_CLIENT is None:
             raise RuntimeError("OpenAI client is unavailable")
-        response = _OPENAI_CLIENT.responses.create(
-            model=MODEL,
-            input=_prompt(utterance, history, current_scenario),
-            max_output_tokens=300,
-            text={
+        request = {
+            "model": MODEL,
+            "input": _prompt(utterance, history, current_scenario),
+            "max_output_tokens": 600 if MODEL.lower().startswith("gpt-5") else 300,
+            "text": {
                 "format": {
                     "type": "json_schema",
                     "name": "voice_router_result",
@@ -359,7 +367,11 @@ def route(
                     "schema": ROUTER_SCHEMA,
                 }
             },
-        )
+        }
+        reasoning_effort = _gpt5_reasoning_effort(MODEL)
+        if reasoning_effort is not None:
+            request["reasoning"] = {"effort": reasoning_effort}
+        response = _OPENAI_CLIENT.responses.create(**request)
         result = json.loads(response.output_text)
 
         if result.get("scenario_id") not in SCENARIO_IDS:
