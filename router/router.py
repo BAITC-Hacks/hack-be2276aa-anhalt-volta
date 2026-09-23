@@ -15,6 +15,9 @@ from typing import Any
 def _lang(text: str) -> str:
     has_ru = bool(re.search(r"[ыэёъыюя]|\b(и|ещё|хочу|скажите|пожалуйста)\b", text.lower()))
     has_kk = bool(re.search(r"[әіңғүұқөһ]|\b(және|керек|айт|сақтандыру|полисім)\b", text.lower()))
+    has_en = bool(re.search(r"\b(the|a|an|insurance|policy|claim|payment|check|buy|help|please|address)\b", text.lower()))
+    if has_en and not has_ru and not has_kk:
+        return "en"
     if has_ru and has_kk:
         return "mixed"
     return "kk" if has_kk else "ru"

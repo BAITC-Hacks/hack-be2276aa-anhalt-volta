@@ -29,7 +29,10 @@ def _load_titles() -> dict[str, str]:
     return titles
 
 
-TITLES = _load_titles()
+EN_TITLES = _load_titles()
+EN_TITLES.update(SYS_UNCLEAR="Clarify request", SYS_OUT_OF_SCOPE="Outside supported services", SYS_GOODBYE="Goodbye")
+TITLES = dict(EN_TITLES)
+TITLES.update(SYS_UNCLEAR="Уточнение запроса", SYS_OUT_OF_SCOPE="Вне области страхования", SYS_GOODBYE="Завершение диалога")
 # The source catalog keeps English machine-readable names. The UI uses this
 # Russian label map so the supervisor panel is readable for the demo audience.
 TITLES.update({
@@ -75,6 +78,7 @@ TITLES.update({
     "SC40": "Объяснение условий полиса",
 })
 TITLES_KK = {
+    "SYS_UNCLEAR": "Сұрауды нақтылау", "SYS_OUT_OF_SCOPE": "Қызмет аясынан тыс", "SYS_GOODBYE": "Диалогты аяқтау",
     "SC01": "ОГПО құнын есептеу", "SC02": "ОГПО рәсімдеу",
     "SC03": "КАСКО бойынша кеңес және есептеу", "SC04": "Полиске жүргізуші қосу",
     "SC05": "Көлікті немесе нөмірді өзгерту", "SC06": "Саяхат сақтандыруын сатып алу",
@@ -101,6 +105,9 @@ TITLES_KK = {
 def localized_title(scenario_id: str, language: str) -> str:
     ru = TITLES.get(scenario_id, scenario_id)
     kk = TITLES_KK.get(scenario_id, ru)
+    en = EN_TITLES.get(scenario_id, scenario_id)
+    if language == "en":
+        return en
     if language == "kk":
         return kk
     if language == "mixed":
@@ -214,6 +221,17 @@ def _reply(result: dict[str, Any], utterance: str) -> str:
     title = localized_title(scenario, lang)
     queued = result.get("queued_scenarios", [])
     normalized = utterance.strip().lower()
+    if lang == "en":
+        if re.fullmatch(r"(hello|hi|hey|good morning|good afternoon|good evening)\s*[!.]?", normalized):
+            return "Hello! I can help you buy insurance, check a policy, or report an insurance claim. What do you need?"
+        if scenario == "SYS_UNCLEAR":
+            return "Please clarify what you want to do: buy insurance, check an existing policy, or report an insurance claim?"
+        if scenario == "SYS_OUT_OF_SCOPE":
+            return "This request is outside the insurance services we provide."
+        text = f'Selected scenario: "{title}". Please provide the details needed to continue.'
+        if queued:
+            text += " The next request has been saved."
+        return text
     if re.fullmatch(r"(алло|здравствуйте|добрый день|добрый вечер|доброе утро|сәлеметсіз бе|сәлем|салам)(\s+бро)?\s*[!.]?", normalized):
         return "Здравствуйте! Я помогу оформить страховку, проверить полис или разобраться со страховым случаем. Что нужно сделать?"
     if scenario == "SYS_UNCLEAR" and re.search(r"^оформить[!. ]*$|^купить[!. ]*$|^сақтандыру керек", normalized):
@@ -242,93 +260,47 @@ def _reply(result: dict[str, Any], utterance: str) -> str:
     return text
 
 
-def _openai_route(text: str, history: list[dict] | None) -> dict[str, Any]:
-    """Ask OpenAI for a scenario decision and validate it against the catalog."""
-    if not OPENAI_API_KEY:
-        raise ValueError("Добавьте OPENAI_API_KEY в .env для режима OpenAI.")
-    from openai import OpenAI
-
-    catalog = []
-    scenarios_path = DATASET_DIR / "scenarios.json"
-    if scenarios_path.exists():
-        data = json.loads(scenarios_path.read_text(encoding="utf-8"))
-        catalog = [
-            {
-                "id": item["scenario_id"],
-                "name": item["name"],
-                "description": item.get("description", ""),
-                "not_this_if": item.get("not_this_if", []),
-            }
-            for item in data["scenarios"]
-        ]
-    system = (
-        "Ты — маршрутизатор Saqta Insurance. Выбери сценарий из каталога с учётом "
-        "истории, последней реплики, смены темы и русского/казахского языка. "
-        "Не выдумывай факты и не отвечай свободным текстом. Верни только JSON: "
-        '{"scenario_id":"SC01 или SYS_UNCLEAR или SYS_OUT_OF_SCOPE",'
-        '"confidence":0.0,"reason":"...","alternatives":[],'
-        '"queued_scenarios":[],"reply_language":"ru|kk|mixed",'
-        '"reply_text":"короткий ответ клиенту на его языке"}. '
-        "Для нескольких задач основной сценарий помести в scenario_id, остальные в queued_scenarios. "
-        "reply_text должен быть конкретным следующим вопросом или безопасным объяснением, до 400 символов. "
-        "Не утверждай, что операция выполнена, если это не подтверждено backend-данными. "
-        "Каталог сценариев:\n" + json.dumps(catalog, ensure_ascii=False) +
-        "\nКомпания не предлагает страхование жизни, кредиты и трудоустройство. Такие запросы помечай SYS_OUT_OF_SCOPE."
-    )
-    client = OpenAI(api_key=OPENAI_API_KEY)
-    request = {
-        "model": OPENAI_MODEL,
-        "response_format": {"type": "json_object"},
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": json.dumps({"history": (history or [])[-12:], "utterance": text}, ensure_ascii=False)},
-        ],
-    }
-    # Some GPT-5 reasoning models reject an explicit temperature parameter.
-    if not OPENAI_MODEL.lower().startswith("gpt-5"):
-        request["temperature"] = 0
-    response = client.chat.completions.create(**request)
-    raw = response.choices[0].message.content or "{}"
-    result = json.loads(raw)
-    allowed = set(TITLES) | {"SYS_UNCLEAR", "SYS_OUT_OF_SCOPE"}
-    scenario_id = result.get("scenario_id")
-    if scenario_id not in allowed:
-        raise ValueError(f"OpenAI вернул неизвестный сценарий: {scenario_id}")
-    queued = [item for item in result.get("queued_scenarios", []) if item in allowed and item != scenario_id]
-    alternatives = [item for item in result.get("alternatives", []) if item in allowed and item != scenario_id]
-    return {
-        "scenario_id": scenario_id,
-        "confidence": max(0.0, min(1.0, float(result.get("confidence", 0.0)))),
-        "reason": str(result.get("reason", "Решение принято моделью.")),
-        "queued_scenarios": queued,
-        "alternatives": alternatives,
-        "reply_language": result.get("reply_language", "ru"),
-        "reply_text": str(result.get("reply_text", ""))[:600],
-    }
+def _openai_route(text, history, state=None, on_decision=None):
+    from llm_routing import route_openai
+    return route_openai(text, history, state, OPENAI_API_KEY, OPENAI_MODEL, on_decision=on_decision)
 
 
-def route(text: str, history: list[dict] | None = None, mode: str = "demo") -> dict[str, Any]:
-    """Route an insurance utterance through the shared deterministic router."""
+def route(text: str, history: list[dict] | None = None, mode: str = "demo",
+          state: dict | None = None, on_decision=None) -> dict[str, Any]:
+    """State is session-owned; callers should persist returned dialogue_state."""
+    from copy import deepcopy
+    from llm_routing import clean_history
     text = text.strip()
     if not text or len(text) > 4000:
         raise ValueError("Введите от 1 до 4000 символов.")
+    if mode not in ("demo", "openai", "live"):
+        raise ValueError("Неизвестный режим")
+    mode = "openai" if mode == "live" else mode
+    history = clean_history(history)
+    state = deepcopy(state or {})
+    current = state.get("current_scenario")
+    current = current if current in TITLES and current.startswith("SC") else None
     started = perf_counter()
     fallback = False
     fallback_reason = ""
     if mode == "openai":
-        guard = route_dialogue(text, history or [], None)
-        if guard["scenario_id"] == "SYS_OUT_OF_SCOPE":
-            result = guard
-        else:
-            try:
-                result = _openai_route(text, history)
-            except Exception as exc:
-                result = guard
-                fallback = True
-                detail = str(exc).replace("\n", " ")[:300]
-                fallback_reason = f"OpenAI недоступен, использован локальный fallback: {type(exc).__name__}: {detail}"
+        try:
+            result = _openai_route(text, history, state, on_decision=on_decision)
+        except Exception as exc:
+            # Model formatting failures are visible, not presented as LLM decisions.
+            fallback = True
+            fallback_reason = type(exc).__name__
+            result = route_dialogue(text, history, current)
     else:
-        result = route_dialogue(text, history or [], None)
+        result = route_dialogue(text, history, current)
+    next_state = result.get("dialogue_state")
+    if next_state is None:
+        # Preserve known facts even when the provider is temporarily unavailable.
+        next_state = deepcopy(state)
+        next_state["current_scenario"] = result["scenario_id"]
+        next_state["pending_topics"] = list(dict.fromkeys(
+            state.get("pending_topics", []) + result.get("queued_scenarios", [])
+        ))
     output = Decision(
         scenario_id=result["scenario_id"],
         confidence=result.get("confidence"),
@@ -336,19 +308,23 @@ def route(text: str, history: list[dict] | None = None, mode: str = "demo") -> d
         alternatives=result.get("alternatives", []),
         reply=(result.get("reply_text") or _reply(result, text)),
         language=result.get("reply_language", "ru"),
-        pending_topics=result.get("queued_scenarios", []),
+        pending_topics=next_state.get("pending_topics", []),
     ).model_dump()
+    response_ms = round((perf_counter() - started) * 1000, 1)
     output.update(
         mode="router-fallback" if fallback else ("openai" if mode == "openai" else "router"),
         model=OPENAI_MODEL if mode == "openai" and not fallback else MODEL_NAME,
-        routing_ms=round((perf_counter() - started) * 1000, 1),
+        fallback=fallback, fallback_reason=fallback_reason,
+        dialogue_state=next_state, api_attempts=result.get("api_attempts", 1 if mode == "openai" else 0),
+        api_ms=result.get("api_ms"), tokens=result.get("tokens"),
+        validation_notes=result.get("validation_notes", []),
+        routing_ms=result.get("decision_ms") or response_ms,
+        response_ms=response_ms,
         input=text,
         scenario_title=localized_title(output["scenario_id"], output["language"]),
         alternative_titles=[localized_title(item, output["language"]) for item in output["alternatives"]],
         pending_topic_titles=[localized_title(item, output["language"]) for item in output["pending_topics"]],
     )
-    if fallback:
-        output["explanation"] = fallback_reason + ". " + output["explanation"]
     return output
 
 
