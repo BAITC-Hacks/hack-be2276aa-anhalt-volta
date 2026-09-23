@@ -1,163 +1,194 @@
-"""Streamlit UI: streamlit run app.py."""
+"""Streamlit UI for the FastAPI voice router."""
+import base64
 import json
+import os
 from time import perf_counter
+from pathlib import Path
+from uuid import uuid4
+
+import requests
 import streamlit as st
 import streamlit.components.v1 as components
-from agent import TITLES, route, transcribe
-from config import GEMINI_API_KEY, MODEL_NAME
+from dotenv import load_dotenv
 
-st.set_page_config(page_title='Sөile • Voice Router', page_icon='🎙️', layout='wide')
+from agent import route as local_route, transcribe
 
-DEMOS = {
-    'Русский · потеря карты': ['Я потерял карту, хочу её заблокировать.'],
-    'Қазақша · карта': ['Сәлеметсіз бе! Картамды жоғалттым, бұғаттау керек.'],
-    'Смешанный · доставка': ['Сәлеметсіз бе! Хочу поменять адрес доставки карты, мекенжайым өзгерді.'],
-    'Смена темы': ['Хочу заблокировать карту.', 'Передумал, лучше проверить баланс.'],
-}
+ROOT = Path(__file__).resolve().parent.parent
+load_dotenv(ROOT / ".env")
+API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
+
+st.set_page_config(page_title="Sөile • Voice Router", page_icon="🎙️", layout="wide")
 
 
-def reset():
+def reset_state():
     st.session_state.messages = []
     st.session_state.traces = []
-    st.session_state.demo_step = 0
-    st.session_state.audio_version = st.session_state.get('audio_version', 0) + 1
+    st.session_state.session_id = None
+    st.session_state.audio_key = st.session_state.get("audio_key", 0) + 1
+    st.session_state.last_audio = None
 
 
-if 'messages' not in st.session_state:
-    reset()
-
-
-def submit(text, mode, stt_ms=None):
-    started = perf_counter()
+def create_session():
     try:
-        with st.spinner('Обрабатываем обращение…'):
-            result = route(text, st.session_state.messages, mode)
-    except ValueError:
-        st.error('Запрос или ответ модели не прошёл проверку. Проверьте длину текста, ключ и настройки модели.')
+        response = requests.post(f"{API_URL}/session", timeout=5)
+        response.raise_for_status()
+        st.session_state.session_id = response.json()["session_id"]
+        return True
+    except requests.RequestException as exc:
+        st.error(f"Backend недоступен: {exc}")
         return False
-    except Exception:
-        st.error('Сервис недоступен. Проверьте соединение, ключ, доступ к модели и квоту. Можно переключиться в деморежим.')
-        return False
-    result.update(stt_ms=stt_ms, processing_ms=round((perf_counter() - started) * 1000 + (stt_ms or 0), 1),
-                  tts_ms=None, input=text)
-    st.session_state.messages.extend([{'role': 'user', 'content': text}, {'role': 'assistant', 'content': result['reply']}])
-    st.session_state.traces.append(result)
-    st.session_state.messages = st.session_state.messages[-40:]
-    st.session_state.traces = st.session_state.traces[-20:]
-    return True
 
 
-def speech_button(text, language):
-    # JSON escaping also prevents a generated response from closing the script tag.
-    payload = json.dumps(text, ensure_ascii=True).replace('<', '\\u003c')
-    lang = 'kk-KZ' if language == 'kk' else 'ru-RU'
-    components.html('''
-        <style>body{font:14px sans-serif;color:#cbd5e1}button{padding:10px 16px;
-        border:1px solid #38d9a9;border-radius:9px;background:#152c29;color:#d9fff4;cursor:pointer}</style>
-        <button id="play">▶ Озвучить ответ</button> <span id="status"></span>
-        <script>
-        const status = document.getElementById('status');
-        document.getElementById('play').onclick = () => {
-          if (!('speechSynthesis' in window)) {status.textContent='Браузер не поддерживает озвучку'; return;}
-          const lang = ''' + json.dumps(lang) + ''';
-          const voices = speechSynthesis.getVoices();
-          const voice = voices.find(v => v.lang.toLowerCase().startsWith(lang.slice(0,2)));
-          if (!voice) {status.textContent='Нет голоса для этого языка в браузере / ОС'; return;}
-          speechSynthesis.cancel();
-          const utterance = new SpeechSynthesisUtterance(''' + payload + ''');
-          utterance.lang = lang; utterance.voice = voice;
-          const started = performance.now();
-          utterance.onstart = () => { status.textContent='Старт озвучки: ' + Math.round(performance.now()-started) + ' мс'; };
-          utterance.onerror = () => { status.textContent='Озвучка недоступна'; };
-          speechSynthesis.speak(utterance);
-        };
-        if ('speechSynthesis' in window) speechSynthesis.getVoices();
-        </script>''', height=75)
+def ensure_session():
+    if not st.session_state.get("session_id"):
+        create_session()
 
 
-st.caption('HACKATHON PROTOTYPE  /  RU + KK')
-st.title('Sөile • Voice Router')
-st.write('От обращения клиента — к нужному сценарию. С понятным обоснованием выбора.')
-mode_label = st.radio('Режим работы', ['Демо · без API', 'Gemini · онлайн'], horizontal=True, on_change=reset)
-mode = 'demo' if mode_label.startswith('Демо') else 'live'
-if mode == 'demo':
-    st.info('Демо: локальные правила по ключевым словам, без LLM и распознавания голоса. Историю учитывает только онлайн-режим.')
+def browser_fallback(text, language="ru"):
+    lang = "kk-KZ" if language in ("kk", "kz", "kazakh") else "ru-RU"
+    components.html(
+        f"<script>const u=new SpeechSynthesisUtterance({json.dumps(text, ensure_ascii=False)});"
+        f"u.lang={json.dumps(lang)};speechSynthesis.cancel();speechSynthesis.speak(u);</script>",
+        height=0,
+    )
+
+
+def play_tts(text, language="ru"):
+    if not text:
+        return None
+    try:
+        response = requests.post(f"{API_URL}/tts", json={"text": text}, timeout=20)
+        response.raise_for_status()
+        encoded = base64.b64encode(response.content).decode("ascii")
+        audio_id = uuid4().hex
+        payload = json.dumps(text, ensure_ascii=False)
+        lang = "kk-KZ" if language in ("kk", "kz", "kazakh") else "ru-RU"
+        components.html(
+            f"""<audio id="a-{audio_id}" controls autoplay style="width:100%"
+                src="data:audio/mpeg;base64,{encoded}"></audio>
+                <script>
+                const audio=document.getElementById('a-{audio_id}');
+                audio.onerror=()=>{{const u=new SpeechSynthesisUtterance({payload});
+                u.lang={json.dumps(lang)};speechSynthesis.speak(u);}};
+                audio.play().catch(()=>{{}});
+                </script>""",
+            height=55,
+        )
+        return float(response.headers.get("tts_ms", 0) or 0)
+    except (requests.RequestException, ValueError):
+        browser_fallback(text, language)
+        return None
+
+
+def backend_turn(text):
+    response = requests.post(
+        f"{API_URL}/turn",
+        json={"session_id": st.session_state.session_id, "text": text},
+        timeout=30,
+    )
+    response.raise_for_status()
+    result = response.json()
+    return {
+        **result,
+        "reply": result.get("answer_text", ""),
+        "explanation": result.get("reasoning", ""),
+        "routing_ms": (result.get("timings_ms") or {}).get("llm_ms", 0),
+        "language": result.get("language", "ru"),
+        "mode": result.get("router_mode", "llm"),
+    }
+
+
+def submit(text, mode="openai", stt_ms=None):
+    if not st.session_state.get("session_id") and not create_session():
+        return
+    try:
+        with st.spinner("Обрабатываем обращение…"):
+            if mode == "local":
+                result = local_route(text, st.session_state.messages, "demo")
+            else:
+                result = backend_turn(text)
+        tts_ms = play_tts(result.get("reply", ""), result.get("language", "ru"))
+        timings = dict(result.get("timings_ms") or {})
+        timings["stt_ms"] = stt_ms
+        timings["tts_ms"] = tts_ms
+        result.update(input=text, stt_ms=stt_ms, tts_ms=tts_ms, timings_ms=timings)
+        st.session_state.messages.extend([
+            {"role": "user", "content": text},
+            {"role": "assistant", "content": result.get("reply", "")},
+        ])
+        st.session_state.messages = st.session_state.messages[-40:]
+        st.session_state.traces.append(result)
+        st.session_state.traces = st.session_state.traces[-20:]
+    except requests.RequestException as exc:
+        st.error(f"Backend не обработал запрос: {exc}")
+    except Exception as exc:
+        st.error(f"Не удалось обработать запрос: {exc}")
+
+
+if "messages" not in st.session_state:
+    reset_state()
+ensure_session()
+
+st.caption("HACKATHON PROTOTYPE  /  RU + KK")
+st.title("Sөile • Voice Router")
+st.caption(f"API: {API_URL} · Сессия: {st.session_state.get('session_id') or 'не создана'}")
+
+mode_label = st.radio("Режим маршрутизации", ["OpenAI · backend", "Локальный роутер · fallback"], horizontal=True)
+mode = "local" if mode_label.startswith("Локальный") else "openai"
+if mode == "local":
+    st.warning("Включён локальный резервный роутер. Для рабочего режима выберите OpenAI · backend.")
 else:
-    st.caption(f'Модель: {MODEL_NAME}. Текст, последние 12 сообщений и отправленная запись обрабатываются Gemini.')
-    if not GEMINI_API_KEY:
-        st.warning('Для онлайн-режима добавьте GEMINI_API_KEY в .env и перезапустите приложение.')
-st.caption('Прототип не подключён к банковским системам и не выполняет операции. Используйте тестовые данные.')
+    st.caption("По умолчанию запросы идут в FastAPI и далее в OpenAI-роутер.")
 
-left, right = st.columns([3, 2], gap='large')
+left, right = st.columns([3, 2], gap="large")
 with left:
-    st.subheader('Чат клиента')
-    with st.expander('Попробовать демо-диалог'):
-        selection = st.selectbox('Сценарий демонстрации', list(DEMOS), on_change=lambda: st.session_state.update(demo_step=0))
-        steps = DEMOS[selection]
-        step = st.session_state.demo_step
-        st.caption(steps[min(step, len(steps)-1)])
-        if st.button('Отправить следующую реплику', disabled=step >= len(steps)):
-            if submit(steps[step], mode):
-                st.session_state.demo_step += 1
-                st.rerun()
-    with st.container(height=400, border=True):
-        if not st.session_state.messages:
-            st.write('👋 Здравствуйте! Опишите, с чем нужна помощь.')
-            st.caption('Например: «Хочу поменять адрес доставки карты».')
-        for message in st.session_state.messages:
-            with st.chat_message(message['role']):
-                st.write(message['content'])
-    prompt = st.chat_input('Напишите сообщение…', max_chars=4000, disabled=mode == 'live' and not GEMINI_API_KEY)
-    if prompt and submit(prompt, mode):
+    st.subheader("Чат клиента")
+    prompt = st.chat_input("Напишите сообщение…", max_chars=4000)
+    if prompt:
+        submit(prompt, mode)
         st.rerun()
-    with st.expander('🎙 Голосовое сообщение'):
-        st.caption('Запишите короткую фразу, затем нажмите «Распознать и отправить». Нужны онлайн-режим и доступ к микрофону.')
-        audio = st.audio_input('Запись', key=f'audio_{st.session_state.audio_version}', disabled=mode == 'demo' or not GEMINI_API_KEY)
-        if st.button('Распознать и отправить', disabled=audio is None or mode == 'demo' or not GEMINI_API_KEY):
+    with st.container(height=420, border=True):
+        if not st.session_state.messages:
+            st.write("👋 Здравствуйте! Опишите, с чем нужна помощь.")
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.write(message["content"])
+
+    with st.expander("🎙 Голосовое сообщение"):
+        st.caption("STT выполняется backend через OpenAI; поддерживаются webm/ogg/wav.")
+        audio = st.audio_input("Запись", key=f"audio_{st.session_state.audio_key}")
+        if st.button("Распознать и отправить", disabled=audio is None):
             try:
-                started = perf_counter()
-                with st.spinner('Распознаём речь…'):
+                with st.spinner("Распознаём речь…"):
+                    started = perf_counter()
                     text = transcribe(audio.getvalue())
                 stt_ms = round((perf_counter() - started) * 1000, 1)
-            except Exception:
-                st.error('Не удалось распознать запись. Проверьте ключ, модель и соединение или введите текст.')
-            else:
-                if submit(text, mode, stt_ms):
-                    st.session_state.audio_version += 1
-                    st.rerun()
-    if st.session_state.traces:
-        last = st.session_state.traces[-1]
-        speech_button(last['reply'], last['language'])
-    if st.button('Очистить диалог'):
-        reset()
+                submit(text, mode, stt_ms)
+                st.session_state.audio_key += 1
+                st.rerun()
+            except Exception as exc:
+                st.error(f"Не удалось распознать запись: {exc}. Переключитесь на текст.")
+
+    if st.button("Новый диалог"):
+        reset_state()
+        create_session()
         st.rerun()
 
 with right:
-    st.subheader('Панель супервизора')
+    st.subheader("Панель супервизора")
     if not st.session_state.traces:
-        with st.container(border=True):
-            st.write('Ожидаем первое обращение')
-            st.caption('Здесь появятся сценарий, обоснование и время обработки.')
+        st.info("Ожидаем первое обращение")
     else:
-        traces = st.session_state.traces
-        index = st.selectbox('Обращение', range(len(traces)), index=len(traces)-1,
-                             format_func=lambda i: f'{i+1}. {traces[i]["input"][:55]}')
-        result = traces[index]
-        with st.container(border=True):
-            st.caption('ВЫБРАННЫЙ СЦЕНАРИЙ')
-            st.subheader(TITLES[result['scenario_id']])
-            st.code(result['scenario_id'], language=None)
-            confidence = result['confidence']
-            st.metric('Оценка уверенности модели', '—' if confidence is None else f'{confidence:.0%}')
-            st.caption('Самооценка модели, не измеренная точность. В демо отсутствует.')
-            st.write(result['explanation'])
-            st.write('Альтернативы: ' + (', '.join(TITLES[a] for a in result['alternatives']) or 'нет'))
-        st.write('**Время обработки**')
-        st.table({'Этап': ['Распознавание (STT)', 'Маршрутизация', 'Всего до ответа'],
-                  'Время': ['—' if result['stt_ms'] is None else f'{result["stt_ms"]:.1f} мс',
-                            f'{result["routing_ms"]:.1f} мс', f'{result["processing_ms"]:.1f} мс']})
-        st.caption('Без времени записи и озвучки. Задержка старта TTS показывается рядом с кнопкой озвучки; голоса зависят от браузера и ОС.')
-        with st.expander('JSON результата'):
-            st.json(result)
-        st.download_button('Скачать трассировку JSON', json.dumps(traces, ensure_ascii=False, indent=2),
-                           file_name='trace.json', mime='application/json')
+        result = st.session_state.traces[-1]
+        st.markdown(f"**Сценарий:** `{result.get('scenario_id', '—')}`")
+        st.write(f"**Confidence:** {result.get('confidence', '—')}")
+        st.write(f"**Reasoning:** {result.get('explanation', '—')}")
+        st.write(f"**Action:** `{result.get('action', '—')}`")
+        st.write(f"**Router mode:** `{result.get('router_mode', result.get('mode', '—'))}`")
+        st.write(f"**Pending topics:** {result.get('pending_topics') or 'нет'}")
+        timings = result.get("timings_ms") or {}
+        st.table({"Этап": ["STT", "LLM", "TTS", "Total"], "Время": [
+            f"{timings.get('stt_ms', '—')} мс", f"{timings.get('llm_ms', '—')} мс",
+            f"{timings.get('tts_ms', '—')} мс", f"{timings.get('total', '—')} мс",
+        ]})
+        st.json(result)

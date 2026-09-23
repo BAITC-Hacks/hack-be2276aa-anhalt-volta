@@ -1,9 +1,15 @@
 """Validated scenario routing. Demo mode never calls an external service."""
 import json
+import os
 from time import perf_counter
 from typing import Literal
+import requests
+from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 from config import GEMINI_API_KEY, MODEL_NAME
+
+load_dotenv()
+API_URL = os.getenv('API_URL', 'http://127.0.0.1:8000').rstrip('/')
 
 Scenario = Literal['card_block', 'change_address', 'check_balance', 'clarify']
 TITLES = {'card_block': 'Блокировка карты', 'change_address': 'Смена адреса доставки',
@@ -98,12 +104,16 @@ def route(text: str, history: list[dict] | None = None, mode: str = 'demo') -> d
 def transcribe(audio: bytes) -> str:
     if not audio or len(audio) > 5 * 1024 * 1024:
         raise ValueError('Запись должна быть непустой и не больше 5 МБ.')
-    from google.genai import types
-    with get_client() as client:
-        response = client.models.generate_content(model=MODEL_NAME, contents=[
-            'Точно расшифруй речь на русском и/или казахском. Только текст речи, без комментариев. Если речи нет, верни пустую строку.',
-            types.Part.from_bytes(data=audio, mime_type='audio/wav')])
-    text = (response.text or '').strip()
+    try:
+        response = requests.post(
+            f'{API_URL}/stt',
+            files={'audio': ('recording.webm', audio, 'audio/webm')},
+            timeout=30,
+        )
+        response.raise_for_status()
+        text = (response.json().get('text') or '').strip()
+    except requests.RequestException as exc:
+        raise ValueError(f'Сервис распознавания недоступен: {exc}') from exc
     if not text:
         raise ValueError('Речь не распознана. Попробуйте ещё раз или введите текст.')
     return text

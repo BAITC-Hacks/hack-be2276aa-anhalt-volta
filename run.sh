@@ -67,4 +67,4 @@ echo "FastAPI:   http://127.0.0.1:$PORT"
 echo "Streamlit: http://127.0.0.1:$STREAMLIT_PORT"
 "$VENV_PYTHON" -m uvicorn backend.app:app --reload --port "$PORT" &
 BACKEND_PID=$!
-"$VENV_PYTHON" -m streamlit run Soile-Avatar/app.py --server.address 127.0.0.1 --server.port "$STREAMLIT_PORT"
+"$VENV_PYTHON" -m streamlit run Soile-Voice-Router/app.py --server.address 127.0.0.1 --server.port "$STREAMLIT_PORT"
