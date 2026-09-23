@@ -4,15 +4,15 @@ from time import perf_counter
 import streamlit as st
 import streamlit.components.v1 as components
 from agent import TITLES, route, transcribe
-from config import GEMINI_API_KEY, MODEL_NAME
+from config import OPENAI_API_KEY, OPENAI_MODEL
 
 st.set_page_config(page_title='Sөile • Voice Router', page_icon='🎙️', layout='wide')
 
 DEMOS = {
-    'Русский · потеря карты': ['Я потерял карту, хочу её заблокировать.'],
-    'Қазақша · карта': ['Сәлеметсіз бе! Картамды жоғалттым, бұғаттау керек.'],
-    'Смешанный · доставка': ['Сәлеметсіз бе! Хочу поменять адрес доставки карты, мекенжайым өзгерді.'],
-    'Смена темы': ['Хочу заблокировать карту.', 'Передумал, лучше проверить баланс.'],
+    'Русский · платёж и полис': ['Деньги списали, но полис не оформился.'],
+    'Қазақша · срок полиса': ['Полисімнің мерзімі қашан бітеді?'],
+    'Смешанный · КАСКО и осмотр': ['Кеше көлігімді біреу соғып кетті, КАСКО бар, и ещё где пройти осмотр?'],
+    'Несколько задач': ['Не пришёл полис на почту, и ещё хочу поменять почту на новую.'],
 }
 
 
@@ -75,18 +75,18 @@ def speech_button(text, language):
         </script>''', height=75)
 
 
-st.caption('HACKATHON PROTOTYPE  /  RU + KK')
-st.title('Sөile • Voice Router')
-st.write('От обращения клиента — к нужному сценарию. С понятным обоснованием выбора.')
-mode_label = st.radio('Режим работы', ['Демо · без API', 'Gemini · онлайн'], horizontal=True, on_change=reset)
-mode = 'demo' if mode_label.startswith('Демо') else 'live'
+st.caption('HACKATHON PROTOTYPE  /  RU + KK  /  40 INSURANCE SCENARIOS')
+st.title('Voice Router • Saqta Insurance')
+st.write('Свободная реплика клиента — к страховому сценарию с объяснимой трассировкой.')
+mode_label = st.radio('Режим работы', ['Локальный страховой роутер', 'OpenAI онлайн'], horizontal=True, on_change=reset)
+mode = 'openai' if mode_label.startswith('OpenAI') else 'demo'
 if mode == 'demo':
-    st.info('Демо: локальные правила по ключевым словам, без LLM и распознавания голоса. Историю учитывает только онлайн-режим.')
+    st.info('Локальный роутер подключён из ../router/router.py. API-ключ не нужен.')
+elif not OPENAI_API_KEY:
+    st.warning('Для OpenAI режима добавьте OPENAI_API_KEY в .env и перезапустите приложение.')
 else:
-    st.caption(f'Модель: {MODEL_NAME}. Текст, последние 12 сообщений и отправленная запись обрабатываются Gemini.')
-    if not GEMINI_API_KEY:
-        st.warning('Для онлайн-режима добавьте GEMINI_API_KEY в .env и перезапустите приложение.')
-st.caption('Прототип не подключён к банковским системам и не выполняет операции. Используйте тестовые данные.')
+    st.caption(f'Модель OpenAI: {OPENAI_MODEL}. При ошибке API используется локальный fallback.')
+st.caption('Прототип использует синтетические данные Saqta Insurance и не выполняет реальные страховые операции.')
 
 left, right = st.columns([3, 2], gap='large')
 with left:
@@ -103,17 +103,18 @@ with left:
     with st.container(height=400, border=True):
         if not st.session_state.messages:
             st.write('👋 Здравствуйте! Опишите, с чем нужна помощь.')
-            st.caption('Например: «Хочу поменять адрес доставки карты».')
+            st.caption('Например: «Деньги списали, но полис не оформился».')
         for message in st.session_state.messages:
             with st.chat_message(message['role']):
                 st.write(message['content'])
-    prompt = st.chat_input('Напишите сообщение…', max_chars=4000, disabled=mode == 'live' and not GEMINI_API_KEY)
+    prompt = st.chat_input('Напишите сообщение…', max_chars=4000,
+                           disabled=mode == 'openai' and not OPENAI_API_KEY)
     if prompt and submit(prompt, mode):
         st.rerun()
     with st.expander('🎙 Голосовое сообщение'):
-        st.caption('Запишите короткую фразу, затем нажмите «Распознать и отправить». Нужны онлайн-режим и доступ к микрофону.')
-        audio = st.audio_input('Запись', key=f'audio_{st.session_state.audio_version}', disabled=mode == 'demo' or not GEMINI_API_KEY)
-        if st.button('Распознать и отправить', disabled=audio is None or mode == 'demo' or not GEMINI_API_KEY):
+        st.caption('Голосовой канал подключается отдельным STT-модулем. Пока используйте текстовый канал.')
+        audio = st.audio_input('Запись', key=f'audio_{st.session_state.audio_version}', disabled=True)
+        if st.button('Распознать и отправить', disabled=True):
             try:
                 started = perf_counter()
                 with st.spinner('Распознаём речь…'):
@@ -145,13 +146,13 @@ with right:
         result = traces[index]
         with st.container(border=True):
             st.caption('ВЫБРАННЫЙ СЦЕНАРИЙ')
-            st.subheader(TITLES[result['scenario_id']])
+            st.subheader(result.get('scenario_title', TITLES.get(result['scenario_id'], result['scenario_id'])))
             st.code(result['scenario_id'], language=None)
             confidence = result['confidence']
             st.metric('Оценка уверенности модели', '—' if confidence is None else f'{confidence:.0%}')
             st.caption('Самооценка модели, не измеренная точность. В демо отсутствует.')
             st.write(result['explanation'])
-            st.write('Альтернативы: ' + (', '.join(TITLES[a] for a in result['alternatives']) or 'нет'))
+            st.write('Альтернативы: ' + (', '.join(result.get('alternative_titles', [])) or 'нет'))
         st.write('**Время обработки**')
         st.table({'Этап': ['Распознавание (STT)', 'Маршрутизация', 'Всего до ответа'],
                   'Время': ['—' if result['stt_ms'] is None else f'{result["stt_ms"]:.1f} мс',

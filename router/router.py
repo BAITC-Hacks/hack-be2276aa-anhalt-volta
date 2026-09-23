@@ -55,7 +55,7 @@ def route_dialogue(utterance: str, history: list[dict[str, Any]] | None = None,
     # Explicit operator and system cases have precedence.
     if re.search(r"соедин.*оператор|оператор.*соедин|соедин.*челов|человеком|адаммен|тірі оператор", text):
         return _result("switch", "SC37", .99, "Клиент явно просит соединить с оператором.", text=text)
-    if re.search(r"кредит|өмір.*сақтан|жұмысқа орналас|погода|зейнетақы|ипотек", text):
+    if re.search(r"кредит|өмір.*сақтан|страхован.*жизн|страхов.*жизн|роскошн.*жизн|\blife\b|жұмысқа орналас|погода|зейнетақы|ипотек", text):
         return _result("escalate", "SYS_OUT_OF_SCOPE", .99, "Запрос не относится к услугам страховой компании.", text=text)
     if re.search(r"по поводу страховки|бір нәрсе сұрайын|с машиной вопрос", text) and len(text.split()) < 10:
         return _result("clarify", "SYS_UNCLEAR", .25, "Недостаточно информации для выбора сценария.", text=text)

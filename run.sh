@@ -2,4 +2,3 @@
 set -e
 
 uvicorn backend.app:app --reload
-
