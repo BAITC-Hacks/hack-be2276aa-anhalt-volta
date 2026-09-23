@@ -66,6 +66,22 @@ def _param(params: dict[str, Any], *names: str) -> Any:
     return None
 
 
+def _extract_params(text: str) -> dict[str, str]:
+    params: dict[str, str] = {}
+    phone = re.search(r"\+?7\s*\(?\d{3}\)?[\s-]?\d{3}[\s-]?\d{2}[\s-]?\d{2}", text)
+    if phone:
+        params["phone"] = re.sub(r"\D", "", phone.group(0))
+        if not params["phone"].startswith("7"):
+            params["phone"] = "7" + params["phone"]
+        params["phone"] = "+" + params["phone"]
+    if re.search(r"переех|переезд|мекенжай|көшіп", text.lower()):
+        params["contact_field"] = "address"
+    address = re.search(r"(?:адрес|мекенжай)[\s:]+(.+?)(?:\.|$)", text, re.IGNORECASE)
+    if address:
+        params["new_value"] = address.group(1).strip()
+    return params
+
+
 def _find_client(params: dict[str, Any], session: dict[str, Any]) -> dict[str, Any] | None:
     if session.get("client"):
         return session["client"]
@@ -207,6 +223,20 @@ def _topic_opening(topic: str, language: str) -> str:
 def execute_turn(route_result: dict[str, Any], utterance: str, session: dict[str, Any]) -> dict[str, Any]:
     """Execute one routed turn and update the mutable session state."""
     language = _language(utterance, session)
+    params = dict(session.get("params") or {})
+    params.update(_extract_params(utterance))
+    params.update(route_result.get("params") or {})
+    session["params"] = params
+
+    if route_result.get("action") == "handoff":
+        return {
+            "action": "handoff",
+            "answer_text": route_result.get("answer_text") or "Передаю вас оператору.",
+            "handoff_context": {"history": session.get("history", []), "route": dict(route_result)},
+            "pending_topics": session.get("pending_topics", []),
+        }
+
+    slot_only_continuation = bool(_extract_params(utterance).get("phone")) and bool(session.get("current_scenario"))
 
     if session.get("pending_return") and _is_yes(utterance):
         topic = session.pop("pending_return")
@@ -234,20 +264,19 @@ def execute_turn(route_result: dict[str, Any], utterance: str, session: dict[str
                 answer += " " + _pending_prompt(topic, language)
         return {"action": "answer", "answer_text": answer, "pending_topics": topics}
 
-    if route_result.get("confidence", 0.0) < 0.6 or route_result.get("action") == "clarify":
+    if (route_result.get("confidence", 0.0) < 0.6 or route_result.get("action") == "clarify") and not slot_only_continuation:
         session["clarification_count"] = session.get("clarification_count", 0) + 1
         if session["clarification_count"] >= 2:
-            return {"action": "handoff", "answer_text": "Не удалось уточнить вопрос. Передаю вас оператору.", "handoff_context": {"history": session.get("history", []), "last_route": route_result}, "pending_topics": session.get("pending_topics", [])}
+            return {"action": "handoff", "answer_text": "Не удалось уточнить вопрос. Передаю вас оператору.", "handoff_context": {"history": session.get("history", []), "last_route": dict(route_result)}, "pending_topics": session.get("pending_topics", [])}
         return {"action": "clarify", "answer_text": route_result.get("answer_text") or "Уточните, пожалуйста, ваш вопрос.", "pending_topics": session.get("pending_topics", [])}
 
     session["clarification_count"] = 0
-    params = dict(route_result.get("params") or {})
     client = _find_client(params, session)
     if client:
         params.setdefault("client_id", client["client_id"])
-    scenario_id = route_result.get("scenario_id")
+    scenario_id = session.get("current_scenario") if slot_only_continuation else route_result.get("scenario_id")
     session["current_scenario"] = scenario_id
-    session["pending_topics"] = route_result.get("pending_topics", session.get("pending_topics", []))
+    session["pending_topics"] = route_result.get("pending_topics") or session.get("pending_topics", [])
     scenario = SCENARIO_BY_ID.get(scenario_id)
     if not scenario:
         return {"action": "clarify", "answer_text": "Уточните, пожалуйста, ваш запрос.", "pending_topics": session.get("pending_topics", [])}
@@ -259,11 +288,11 @@ def execute_turn(route_result: dict[str, Any], utterance: str, session: dict[str
             missing = _required_missing(action_name, params, session)
             if missing:
                 session["clarification_count"] = session.get("clarification_count", 0) + 1
-                return {"action": "clarify", "answer_text": _question(missing, language), "pending_topics": route_result.get("pending_topics", [])}
+                return {"action": "clarify", "answer_text": _question(missing, language), "pending_topics": session.get("pending_topics", [])}
             output = _execute_action(action_name, params, session)
             client = output.get("client")
             if not client:
-                return {"action": "clarify", "answer_text": output.get("error", "Клиент не найден."), "pending_topics": route_result.get("pending_topics", [])}
+                return {"action": "clarify", "answer_text": output.get("error", "Клиент не найден."), "pending_topics": session.get("pending_topics", [])}
             params["client_id"] = client["client_id"]
             continue
 
@@ -271,19 +300,19 @@ def execute_turn(route_result: dict[str, Any], utterance: str, session: dict[str
         if missing:
             session["clarification_count"] = session.get("clarification_count", 0) + 1
             if session["clarification_count"] >= 2:
-                return {"action": "handoff", "answer_text": "Не хватает данных для выполнения операции. Передаю вас оператору.", "handoff_context": {"missing": missing, "scenario_id": scenario_id}, "pending_topics": route_result.get("pending_topics", [])}
-            return {"action": "clarify", "answer_text": _question(missing, language), "pending_topics": route_result.get("pending_topics", [])}
+                return {"action": "handoff", "answer_text": "Не хватает данных для выполнения операции. Передаю вас оператору.", "handoff_context": {"missing": missing, "scenario_id": scenario_id}, "pending_topics": session.get("pending_topics", [])}
+            return {"action": "clarify", "answer_text": _question(missing, language), "pending_topics": session.get("pending_topics", [])}
 
         if action_name in IRREVERSIBLE_ACTIONS:
             question = "Подтвердите, пожалуйста, изменение данных: да или нет." if language == "ru" else "Деректерді өзгертуді растаңызшы: иә немесе жоқ."
             session["pending_action"] = {"action": action_name, "params": params.copy(), "question": question}
-            return {"action": "confirm", "answer_text": question, "pending_topics": route_result.get("pending_topics", [])}
+            return {"action": "confirm", "answer_text": question, "pending_topics": session.get("pending_topics", [])}
 
         output = _execute_action(action_name, params, session)
         if "error" in output:
-            return {"action": "clarify", "answer_text": output["error"], "pending_topics": route_result.get("pending_topics", [])}
+            return {"action": "clarify", "answer_text": output["error"], "pending_topics": session.get("pending_topics", [])}
         if output.get("handoff"):
-            return {"action": "handoff", "answer_text": _answer(action_name, output, language), "handoff_context": {"scenario_id": scenario_id}, "pending_topics": route_result.get("pending_topics", [])}
+            return {"action": "handoff", "answer_text": _answer(action_name, output, language), "handoff_context": {"scenario_id": scenario_id}, "pending_topics": session.get("pending_topics", [])}
 
-    session["pending_topics"] = route_result.get("pending_topics", [])
+    session["pending_topics"] = route_result.get("pending_topics") or session.get("pending_topics", [])
     return {"action": "answer", "answer_text": _answer(scenario.get("actions", [""])[-1], output if 'output' in locals() else {}, language), "pending_topics": session["pending_topics"]}

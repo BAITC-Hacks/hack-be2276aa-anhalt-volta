@@ -36,6 +36,7 @@ def create_session() -> dict[str, str]:
         "pending_topics": [],
         "pending_action": None,
         "pending_return": None,
+        "params": {},
         "clarification_count": 0,
         "trace": [],
     }
