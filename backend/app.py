@@ -5,10 +5,12 @@ from typing import Any
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
 from .executor import execute_turn
 from .router_client import route_safely
+from .speech import router as speech_router
 
 
 load_dotenv()
@@ -18,6 +20,14 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ROUTER_API_KEY = os.getenv("ROUTER_API_KEY")
 
 app = FastAPI(title="Contact Center Voice Bot")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+app.include_router(speech_router)
 
 sessions: dict[str, dict[str, Any]] = {}
 

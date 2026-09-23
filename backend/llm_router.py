@@ -197,6 +197,8 @@ def route(
         # Do not let an LLM response override the explicit operator request.
         fallback = _fallback(utterance, history[-10:], current_scenario, started_at)
         fallback["action"] = "handoff"
+        fallback["router_mode"] = "fast_path"
+        fallback.pop("llm_error", None)
         return fallback
 
     try:
