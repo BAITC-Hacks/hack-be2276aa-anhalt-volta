@@ -1,6 +1,5 @@
 # Sөile — голосовой роутер для Saqta Insurance
 
-![Интерфейс](docs/screenshot.png)
 
 Проект для хакатона HackAlem AI, трек Halyk Bank, кейс 2 «Voice Router».
 
